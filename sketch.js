@@ -5,60 +5,67 @@ let targets = [];
 let particles = [];
 
 // 遊戲狀態控制
-let gameState = "LOADING"; // LOADING, START, PLAYING, GAMEOVER
+let gameState = "LOADING"; 
 let score = 0;
-let gameTimer = 30; // 30秒限時挑戰
+let gameTimer = 30; 
 let lastTimerCheck = 0;
 let isModelReady = false;
 
 function preload() {
-  // 載入模型，並關閉內部自動偵測（以手動控制防卡死）
+  // 載入 AI 模型
   handPose = ml5.handPose({ flipHorizontal: false }, () => {
-    console.log("AI Model Loaded!");
+    console.log("AI Model Loaded Successfully!");
     isModelReady = true;
   }); 
 }
 
 function setup() {
-  createCanvas(800, 600);
+  // 【關鍵修正 1】改成手機直向比例 (Portrait Mode)
+  createCanvas(480, 640);
   
-  // 設定攝影機
-  video = createCapture(VIDEO);
-  video.size(800, 600);
+  // 設定攝影機，並在攝影機準備好後才啟動 AI 偵測
+  video = createCapture(VIDEO, () => {
+    console.log("Video Stream Ready!");
+    handPose.detectStart(video, gotHands);
+  });
+  
+  // 【關鍵修正 2】影片大小必須跟畫布完全一致，避免座標錯亂
+  video.size(480, 640);
   video.hide();
   
-  // 初始生成目標物
   resetGame();
+}
+
+// 取得 AI 偵測結果
+function gotHands(results) {
+  hands = results;
+  
+  // 偵測到模型與畫面都正常時，解除 Loading
+  if (gameState === "LOADING" && isModelReady) {
+    gameState = "START";
+  }
 }
 
 function draw() {
   background(5, 5, 13);
   
-  // 核心：手動控制偵測，只有在模型與影片都好的時候，主動叫 AI 偵測當前這一影格
-  if (isModelReady && video.elt.readyState >= 2) {
-    handPose.detect(video, gotHands);
-  }
-  
-  // 1. 繪製攝影機畫面 (水平翻轉處理鏡像)
+  // 繪製攝影機畫面 (水平翻轉處理鏡像)
   if (gameState === "PLAYING" || gameState === "START" || gameState === "GAMEOVER") {
     push();
     translate(width, 0);
-    scale(-1, 1);
+    scale(-1, 1); // 鏡像翻轉
     if (video.elt.readyState >= 2) {
       image(video, 0, 0, width, height);
     }
     pop();
   }
 
-  // 2. 疊加賽博朋克科技濾鏡
+  // 疊加賽博朋克科技濾鏡
   drawSciFiFilter();
 
-  // 3. 根據遊戲狀態控制畫面
+  // 遊戲狀態切換
   if (gameState === "LOADING") {
     drawLoadingScreen();
-    if (isModelReady && video.elt.readyState >= 2) {
-      gameState = "START";
-    }
   } else if (gameState === "START") {
     drawStartScreen();
   } else if (gameState === "PLAYING") {
@@ -68,19 +75,8 @@ function draw() {
   }
 }
 
-// ------ 取得偵測結果 ------
-function gotHands(results) {
-  // 如果 AI 有回傳結果，就更新 hands 陣列，否則清空
-  if (results && results.length > 0) {
-    hands = results;
-  } else {
-    hands = [];
-  }
-}
-
-// ------ 遊戲核心邏輯 ------
 function runGameLogic() {
-  // 處理倒數計時
+  // 計時器
   if (millis() - lastTimerCheck >= 1000) {
     gameTimer--;
     lastTimerCheck = millis();
@@ -89,7 +85,7 @@ function runGameLogic() {
     }
   }
 
-  // 更新與繪製粒子系統
+  // 繪製粒子特效
   for (let i = particles.length - 1; i >= 0; i--) {
     particles[i].update();
     particles[i].display();
@@ -98,58 +94,63 @@ function runGameLogic() {
     }
   }
 
-  // 更新與繪製數據目標
+  // 繪製標靶
   for (let target of targets) {
     target.update();
     target.display();
   }
 
-  // 手部關鍵點骨架與互動邏輯 (嚴格防崩潰保護)
-  if (hands && hands.length > 0 && hands[0] && hands[0].keypoints) {
-    let hand = hands[0];
-    
-    // 檢查是否有抓到食指尖端(節點8)
-    if (hand.keypoints.length > 8 && hand.keypoints[8]) {
-      let indexFinger = hand.keypoints[8];
+  // 【關鍵修正 3】絕對防禦機制 (Try-Catch) - 防止抓不到資料直接卡死
+  try {
+    if (hands && hands.length > 0) {
+      let hand = hands[0];
       
-      if (indexFinger.x !== undefined && indexFinger.y !== undefined) {
-        // 計算鏡像翻轉後的真實畫布座標
-        let mappedX = width - indexFinger.x;
-        let mappedY = indexFinger.y;
+      // 確認 keypoints 存在且陣列長度足夠 (8 是食指尖端)
+      if (hand.keypoints && hand.keypoints.length > 8) {
+        let indexFinger = hand.keypoints[8];
+        
+        // 確保 X 和 Y 座標是有效數字
+        if (typeof indexFinger.x === 'number' && typeof indexFinger.y === 'number') {
+          
+          // 轉換座標 (與畫面鏡像翻轉對應)
+          let mappedX = width - indexFinger.x;
+          let mappedY = indexFinger.y;
 
-        // 繪製科技感手部準星
-        drawCrosshair(mappedX, mappedY);
+          // 畫準星
+          drawCrosshair(mappedX, mappedY);
 
-        // 碰撞偵測
-        for (let i = targets.length - 1; i >= 0; i--) {
-          let d = dist(mappedX, mappedY, targets[i].x, targets[i].y);
-          if (d < targets[i].r + 15) {
-            if (targets[i].type === "VIRUS") {
-              createExplosion(targets[i].x, targets[i].y, color(0, 255, 200));
-              score += 10;
-            } else {
-              createExplosion(targets[i].x, targets[i].y, color(255, 50, 50));
-              score = max(0, score - 15);
+          // 碰撞偵測
+          for (let i = targets.length - 1; i >= 0; i--) {
+            let d = dist(mappedX, mappedY, targets[i].x, targets[i].y);
+            if (d < targets[i].r + 15) { // 碰到標靶
+              if (targets[i].type === "VIRUS") {
+                createExplosion(targets[i].x, targets[i].y, color(0, 255, 200));
+                score += 10;
+              } else {
+                createExplosion(targets[i].x, targets[i].y, color(255, 50, 50));
+                score = max(0, score - 15);
+              }
+              targets.splice(i, 1);
+              targets.push(new Target());
             }
-            targets.splice(i, 1);
-            targets.push(new Target());
           }
         }
       }
     }
+  } catch (error) {
+    console.error("AI 辨識防呆攔截:", error);
+    // 即使發生錯誤，遊戲畫面也不會卡死！
   }
 
-  // 顯示頂部資訊 UI
   drawUI();
 }
 
-// ------ 遊戲初始化/重設 ------
 function resetGame() {
   score = 0;
   gameTimer = 30;
   targets = [];
   particles = [];
-  for (let i = 0; i < 4; i++) targets.push(new Target("VIRUS"));
+  for (let i = 0; i < 3; i++) targets.push(new Target("VIRUS")); // 直向畫面稍微減少標靶數量
   for (let i = 0; i < 2; i++) targets.push(new Target("CORE_DATA"));
 }
 
@@ -163,6 +164,8 @@ function mousePressed() {
   }
 }
 
+// ================= 以下為視覺與 UI 類別 =================
+
 function drawSciFiFilter() {
   fill(0, 20, 40, 50);
   noStroke();
@@ -170,7 +173,7 @@ function drawSciFiFilter() {
 
   stroke(0, 255, 255, 20);
   strokeWeight(1);
-  for (let i = 0; i < height; i += 5) {
+  for (let i = 0; i < height; i += 4) {
     line(0, i, width, i);
   }
 }
@@ -178,40 +181,32 @@ function drawSciFiFilter() {
 function drawCrosshair(x, y) {
   push();
   noFill();
-  stroke(0, 255, 255, 200);
-  strokeWeight(2);
+  stroke(0, 255, 255, 255);
+  strokeWeight(3);
   ellipse(x, y, 35, 35);
-  ellipse(x, y, 5, 5);
-  
-  stroke(0, 255, 255, 150);
-  line(x - 25, y, x - 10, y);
-  line(x + 10, y, x + 25, y);
-  line(x, y - 25, x, y - 10);
-  line(x, y + 10, x, y + 25);
+  fill(0, 255, 255);
+  ellipse(x, y, 8, 8); // 準星中心加粗
   pop();
 }
 
 function drawUI() {
   push();
   textFont('Courier New');
-  textSize(22);
+  textSize(20);
   
-  // 數據得分
   fill(0, 255, 255);
-  text(`DATA PURGED: ${score}`, 20, 40);
+  text(`SCORE: ${score}`, 15, 30);
   
-  // 倒數計時
   if (gameTimer <= 5) fill(255, 50, 50); 
   else fill(255, 255, 0);
-  text(`SEC_TIMER: ${gameTimer}s`, width - 220, 40);
+  text(`TIME: ${gameTimer}s`, width - 130, 30);
   
-  // 偵測狀態回報
   if (hands && hands.length > 0) {
     fill(0, 255, 100);
-    text(`HAND DETECTED: ACTIVE`, 20, 75);
+    text(`TRACKING: OK`, 15, 60);
   } else {
     fill(255, 150, 0);
-    text(`HAND DETECTED: SEARCHING...`, 20, 75);
+    text(`TRACKING: LOST`, 15, 60);
   }
   pop();
 }
@@ -221,11 +216,10 @@ function drawLoadingScreen() {
   textAlign(CENTER, CENTER);
   textFont('Courier New');
   fill(0, 255, 255);
-  textSize(32);
-  text("INITIALIZING AI MODELS...", width/2, height/2 - 30);
-  textSize(16);
-  fill(0, 255, 255, 150);
-  text("Connecting via Phone Camera QR Link & Loading ml5.js...", width/2, height/2 + 20);
+  textSize(24);
+  text("INITIALIZING...", width/2, height/2);
+  textSize(14);
+  text("Please wait for camera & AI", width/2, height/2 + 30);
   pop();
 }
 
@@ -235,24 +229,22 @@ function drawStartScreen() {
   textFont('Courier New');
   
   fill(0, 255, 255);
-  textSize(45);
-  text("CYBER-TRACE: DATA PURGE", width/2, height/2 - 80);
+  textSize(35);
+  text("DATA PURGE", width/2, height/2 - 80);
   
-  fill(255, 255, 255, 200);
-  textSize(18);
-  text("駕馭數據、人機協作，以洞察與倫理贏戰 AI 新時代！", width/2, height/2 - 20);
+  fill(255, 255, 255);
+  textSize(14);
+  text("Stand in front of the camera.", width/2, height/2 - 20);
+  text("Use your INDEX FINGER to play.", width/2, height/2 + 5);
   
   fill(0, 255, 150);
-  textSize(16);
-  text("【玩法指導】", width/2, height/2 + 40);
-  fill(255, 255, 255);
-  text("1. 移動食指瞄準 🔴 紅色惡意雜訊 進行淨化 (+10)", width/2, height/2 + 70);
+  text("🔴 Hit RED (+10)", width/2, height/2 + 50);
   fill(255, 100, 100);
-  text("2. 警告：切勿觸碰 🔵 核心敏感數據 (-15)", width/2, height/2 + 100);
+  text("🔵 Avoid BLUE (-15)", width/2, height/2 + 80);
   
   fill(0, 255, 255, sin(frameCount * 0.1) * 150 + 100);
-  textSize(22);
-  text(">> CLICK CANVAS TO START WORK <<", width/2, height/2 + 170);
+  textSize(18);
+  text(">> TAP TO START <<", width/2, height/2 + 150);
   pop();
 }
 
@@ -262,26 +254,26 @@ function drawGameOverScreen() {
   textFont('Courier New');
   
   fill(255, 50, 50);
-  textSize(50);
-  text("PURGE COMPLETE", width/2, height/2 - 50);
+  textSize(40);
+  text("COMPLETE", width/2, height/2 - 50);
   
   fill(255, 255, 255);
   textSize(28);
-  text(`FINAL SCORE: ${score}`, width/2, height/2 + 20);
+  text(`SCORE: ${score}`, width/2, height/2 + 20);
   
   fill(0, 255, 255);
   textSize(16);
-  text(">> CLICK TO REBOOT SYSTEM <<", width/2, height/2 + 100);
+  text(">> TAP TO RESTART <<", width/2, height/2 + 100);
   pop();
 }
 
 class Target {
   constructor(type) {
-    this.x = random(50, width - 50);
-    this.y = random(50, height - 50);
     this.r = 20;
-    this.vx = random(-3, 3);
-    this.vy = random(-3, 3);
+    this.x = random(this.r + 10, width - this.r - 10);
+    this.y = random(this.r + 50, height - this.r - 10); // 避開頂部 UI
+    this.vx = random(-2.5, 2.5);
+    this.vy = random(-2.5, 2.5);
     this.type = type || (random(1) > 0.35 ? "VIRUS" : "CORE_DATA");
   }
 
@@ -295,23 +287,19 @@ class Target {
   display() {
     push();
     translate(this.x, this.y);
-    let pulse = sin(frameCount * 0.1) * 5; 
+    let pulse = sin(frameCount * 0.1) * 3; 
     
     if (this.type === "VIRUS") {
-      fill(255, 50, 50, 180);
+      fill(255, 50, 50, 200);
       stroke(255, 150, 150);
       strokeWeight(2);
       rectMode(CENTER);
       rect(0, 0, (this.r + pulse) * 2, (this.r + pulse) * 2);
-      fill(0);
-      rect(0, 0, this.r, this.r);
     } else {
-      fill(0, 150, 255, 150);
+      fill(0, 150, 255, 200);
       stroke(100, 200, 255);
       strokeWeight(2);
       ellipse(0, 0, (this.r + pulse) * 2);
-      stroke(255);
-      line(-this.r, 0, this.r, 0);
     }
     pop();
   }
@@ -322,18 +310,18 @@ class Particle {
     this.x = x;
     this.y = y;
     let angle = random(TWO_PI);
-    let speed = random(2, 7);
+    let speed = random(3, 8);
     this.vx = cos(angle) * speed;
     this.vy = sin(angle) * speed;
     this.alpha = 255;
     this.c = particleColor;
-    this.size = random(4, 9);
+    this.size = random(5, 12);
   }
 
   update() {
     this.x += this.vx;
     this.y += this.vy;
-    this.alpha -= 8; 
+    this.alpha -= 10; 
   }
 
   display() {
@@ -350,7 +338,7 @@ class Particle {
 }
 
 function createExplosion(x, y, particleColor) {
-  for (let i = 0; i < 25; i++) {
+  for (let i = 0; i < 20; i++) {
     particles.push(new Particle(x, y, particleColor));
   }
 }
