@@ -16,7 +16,6 @@ let cursorY = 0;
 let targetCursorX = 0;
 let targetCursorY = 0;
 
-// 用來計算影像與畫布的裁切比例
 let sx = 0, sy = 0, sw = 0, sh = 0;
 
 function preload() {
@@ -27,23 +26,19 @@ function preload() {
 }
 
 function setup() {
-  // 直接抓取手機瀏覽器的 100% 寬高，填滿整個直式螢幕
   createCanvas(windowWidth, windowHeight);
   
   video = createCapture(VIDEO, () => {
     console.log("Camera Ready!");
     handPose.detectStart(video, gotHands);
   });
-  
   video.hide();
   
-  // 初始化準星在正中央
   cursorX = targetCursorX = width / 2;
   cursorY = targetCursorY = height / 2;
   resetGame();
 }
 
-// 支援手機轉向或調整大小
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
@@ -58,12 +53,10 @@ function gotHands(results) {
 function draw() {
   background(5, 5, 13);
   
-  // 1. 精準影像裁切與繪製 (等同於 CSS 的 object-fit: cover)
   if (video.elt.readyState >= 2 && video.width > 0) {
     let vRatio = video.width / video.height;
     let cRatio = width / height;
 
-    // 計算如何完美把鏡頭畫面塞滿直式螢幕，並得出裁切範圍 (sx, sy, sw, sh)
     if (vRatio > cRatio) {
       sh = video.height;
       sw = video.height * cRatio;
@@ -79,8 +72,7 @@ function draw() {
     if (gameState === "PLAYING" || gameState === "START" || gameState === "GAMEOVER") {
       push();
       translate(width, 0);
-      scale(-1, 1); // 鏡像翻轉
-      // 只繪製裁切後的有效範圍
+      scale(-1, 1); 
       image(video, 0, 0, width, height, sx, sy, sw, sh);
       pop();
     }
@@ -88,15 +80,10 @@ function draw() {
 
   drawSciFiFilter();
 
-  if (gameState === "LOADING") {
-    drawLoadingScreen();
-  } else if (gameState === "START") {
-    drawStartScreen();
-  } else if (gameState === "PLAYING") {
-    runGameLogic();
-  } else if (gameState === "GAMEOVER") {
-    drawGameOverScreen();
-  }
+  if (gameState === "LOADING") drawLoadingScreen();
+  else if (gameState === "START") drawStartScreen();
+  else if (gameState === "PLAYING") runGameLogic();
+  else if (gameState === "GAMEOVER") drawGameOverScreen();
 }
 
 function runGameLogic() {
@@ -106,43 +93,74 @@ function runGameLogic() {
     if (gameTimer <= 0) gameState = "GAMEOVER";
   }
 
+  // 繪製粒子特效
   for (let i = particles.length - 1; i >= 0; i--) {
     particles[i].update();
     particles[i].display();
     if (particles[i].isDead()) particles.splice(i, 1);
   }
 
+  // 更新與繪製標靶
   for (let target of targets) {
     target.update();
     target.display();
   }
 
-  // 2. 食指尖端絕對座標轉換 (解決準度偏離與超出邊界問題)
+  // 【新增】標靶之間的物理碰撞彈開邏輯
+  for (let i = 0; i < targets.length; i++) {
+    for (let j = i + 1; j < targets.length; j++) {
+      let t1 = targets[i];
+      let t2 = targets[j];
+      let d = dist(t1.x, t1.y, t2.x, t2.y);
+      let minDist = t1.r + t2.r + 5; // 加上 5px 緩衝區
+
+      if (d < minDist) {
+        // 交換速度 (反彈)
+        let tempVx = t1.vx;
+        let tempVy = t1.vy;
+        t1.vx = t2.vx;
+        t1.vy = t2.vy;
+        t2.vx = tempVx;
+        t2.vy = tempVy;
+
+        // 推開防止卡在一起
+        let overlap = (minDist - d) / 2;
+        let dx = (t2.x - t1.x) / d;
+        let dy = (t2.y - t1.y) / d;
+        t1.x -= dx * (overlap + 1);
+        t1.y -= dy * (overlap + 1);
+        t2.x += dx * (overlap + 1);
+        t2.y += dy * (overlap + 1);
+      }
+    }
+  }
+
+  // 食指指尖追蹤
   try {
     if (hands && hands.length > 0) {
       let hand = hands[0];
       if (hand.keypoints && hand.keypoints.length > 8) {
-        let indexFinger = hand.keypoints[8]; // 8 為食指尖
+        let indexFinger = hand.keypoints[8]; 
         
         if (typeof indexFinger.x === 'number' && typeof indexFinger.y === 'number' && sw > 0) {
-          // 利用 p5 的 map 函數，將相機原始座標「精準映射」到你目前的螢幕範圍
-          // 並且自動處理鏡像水平翻轉 (width 到 0)
-          let mappedX = map(indexFinger.x, sx, sx + sw, width, 0);
-          let mappedY = map(indexFinger.y, sy, sy + sh, 0, height);
-          
-          targetCursorX = mappedX;
-          targetCursorY = mappedY;
+          targetCursorX = map(indexFinger.x, sx, sx + sw, width, 0);
+          targetCursorY = map(indexFinger.y, sy, sy + sh, 0, height);
         }
       }
     }
   } catch (error) {}
 
-  // 3. 速度優化：將過渡係數從 0.4 拉高到 0.85，保留極微小的防抖，但幾乎零延遲！
-  cursorX = lerp(cursorX, targetCursorX, 0.85); 
-  cursorY = lerp(cursorY, targetCursorY, 0.85);
+  // 【優化】動態平滑追蹤防手抖：距離大時移動快，距離小時穩定不過濾微小雜訊
+  let dCursor = dist(cursorX, cursorY, targetCursorX, targetCursorY);
+  if (dCursor > 1.5) { // 忽略 1.5px 以下的鏡頭雜訊抖動
+    let dynamicLerp = map(dCursor, 0, 100, 0.15, 0.8, true);
+    cursorX = lerp(cursorX, targetCursorX, dynamicLerp); 
+    cursorY = lerp(cursorY, targetCursorY, dynamicLerp);
+  }
 
   drawCrosshair(cursorX, cursorY);
 
+  // 射擊碰撞偵測
   for (let i = targets.length - 1; i >= 0; i--) {
     let d = dist(cursorX, cursorY, targets[i].x, targets[i].y);
     if (d < targets[i].r + 15) { 
@@ -166,7 +184,6 @@ function resetGame() {
   gameTimer = 30;
   targets = [];
   particles = [];
-  // 重新調整標靶數量，手機直式螢幕不用太多
   for (let i = 0; i < 4; i++) targets.push(new Target("VIRUS")); 
   for (let i = 0; i < 2; i++) targets.push(new Target("CORE_DATA"));
 }
@@ -181,7 +198,7 @@ function mousePressed() {
   }
 }
 
-// ================= 以下為視覺與 UI =================
+// ================= 以下為視覺與 UI (已全面中文化) =================
 
 function drawSciFiFilter() {
   fill(0, 20, 40, 50);
@@ -200,10 +217,9 @@ function drawCrosshair(x, y) {
   stroke(0, 255, 255, 220);
   strokeWeight(3);
   ellipse(x, y, 35, 35);
-  
   fill(0, 255, 255);
   noStroke();
-  ellipse(x, y, 8, 8); // 紅心點
+  ellipse(x, y, 6, 6); 
   
   stroke(0, 255, 255, 150);
   strokeWeight(2);
@@ -216,22 +232,23 @@ function drawCrosshair(x, y) {
 
 function drawUI() {
   push();
-  textFont('Courier New');
-  textSize(22);
+  textFont('sans-serif');
+  textSize(18);
+  textAlign(LEFT, TOP);
   
   fill(0, 255, 255);
-  text(`SCORE: ${score}`, 20, 40);
+  text(`淨化數據量: ${score}`, 20, 30);
   
   if (gameTimer <= 5) fill(255, 50, 50); 
   else fill(255, 255, 0);
-  text(`TIME: ${gameTimer}s`, width - 140, 40);
+  text(`倒數計時: ${gameTimer}s`, 20, 60);
   
   if (hands && hands.length > 0) {
     fill(0, 255, 100);
-    text(`TRACK: OK`, 20, 70);
+    text(`神經連結: 正常`, 20, 90);
   } else {
     fill(255, 150, 0);
-    text(`TRACK: LOST`, 20, 70);
+    text(`神經連結: 尋找指尖中...`, 20, 90);
   }
   pop();
 }
@@ -239,67 +256,78 @@ function drawUI() {
 function drawLoadingScreen() {
   push();
   textAlign(CENTER, CENTER);
-  textFont('Courier New');
+  textFont('sans-serif');
   fill(0, 255, 255);
-  textSize(26);
-  text("INITIALIZING...", width/2, height/2);
-  textSize(16);
-  text("AI System Loading", width/2, height/2 + 30);
+  textSize(28);
+  text("系統初始化中...", width/2, height/2 - 20);
+  textSize(14);
+  fill(150, 255, 255);
+  text("正在連結相機與 AI 視覺模組", width/2, height/2 + 20);
   pop();
 }
 
 function drawStartScreen() {
   push();
   textAlign(CENTER, CENTER);
-  textFont('Courier New');
+  textFont('sans-serif');
   
   fill(0, 255, 255);
-  textSize(40);
-  text("DATA PURGE", width/2, height/2 - 100);
+  textSize(36);
+  text("CYBER-TRACE", width/2, height/2 - 120);
+  textSize(24);
+  text("數據淨化", width/2, height/2 - 80);
+  
+  // 放回你設計的海報標語，強化主題感
+  fill(255, 255, 255, 200);
+  textSize(12);
+  text("駕馭數據、人機協作，以洞察與倫理贏戰 AI 新時代！", width/2, height/2 - 40);
   
   fill(255, 255, 255);
   textSize(16);
-  text("Point your INDEX FINGER to aim", width/2, height/2 - 30);
+  text("【 操作指南 】", width/2, height/2 + 20);
+  text("伸出你的【食指】引導畫面準星", width/2, height/2 + 50);
   
-  fill(0, 255, 150);
-  textSize(18);
-  text("🔴 VIRUS (+10)", width/2, height/2 + 40);
   fill(255, 100, 100);
-  text("🔵 CORE DATA (-15)", width/2, height/2 + 80);
+  textSize(16);
+  text("🔴 淨化 惡意雜訊 [ERR] (+10)", width/2, height/2 + 90);
+  fill(100, 200, 255);
+  text("🔵 避開 系統核心 [SYS] (-15)", width/2, height/2 + 120);
   
   fill(0, 255, 255, sin(frameCount * 0.1) * 150 + 100);
-  textSize(22);
-  text(">> TAP TO START <<", width/2, height/2 + 160);
+  textSize(18);
+  text(">> 點擊螢幕開始執行 <<", width/2, height/2 + 180);
   pop();
 }
 
 function drawGameOverScreen() {
   push();
   textAlign(CENTER, CENTER);
-  textFont('Courier New');
+  textFont('sans-serif');
   
   fill(255, 50, 50);
-  textSize(45);
-  text("COMPLETE", width/2, height/2 - 60);
+  textSize(40);
+  text("淨化程序結束", width/2, height/2 - 60);
   
   fill(255, 255, 255);
-  textSize(30);
-  text(`SCORE: ${score}`, width/2, height/2 + 20);
+  textSize(26);
+  text(`最終數據量: ${score}`, width/2, height/2 + 10);
   
   fill(0, 255, 255);
-  textSize(18);
-  text(">> TAP TO RESTART <<", width/2, height/2 + 100);
+  textSize(16);
+  text(">> 點擊螢幕重新啟動系統 <<", width/2, height/2 + 80);
   pop();
 }
 
+// ================= 科技風格粒子與標靶 =================
+
 class Target {
   constructor(type) {
-    this.r = 30; // 手機版稍微加大標靶，更好瞄準
-    // 限制生成範圍，絕對不會生在螢幕最邊緣讓你點不到
+    this.r = 28; 
     this.x = random(this.r + 30, width - this.r - 30);
-    this.y = random(this.r + 90, height - this.r - 30); 
-    this.vx = random(-2.5, 2.5);
-    this.vy = random(-2.5, 2.5);
+    this.y = random(this.r + 120, height - this.r - 30); // 避開頂部文字
+    // 速度稍微調慢一點，讓手機遊玩體驗更好
+    this.vx = random(-1.5, 1.5);
+    this.vy = random(-1.5, 1.5);
     this.type = type || (random(1) > 0.35 ? "VIRUS" : "CORE_DATA");
   }
 
@@ -313,19 +341,57 @@ class Target {
   display() {
     push();
     translate(this.x, this.y);
-    let pulse = sin(frameCount * 0.15) * 4; 
+    let pulse = sin(frameCount * 0.1) * 3; 
     
     if (this.type === "VIRUS") {
-      fill(255, 50, 50, 200);
-      stroke(255, 150, 150);
+      // 惡意病毒：紅色數位鑽石
+      fill(50, 0, 0, 180);
+      stroke(255, 50, 50);
       strokeWeight(2);
-      rectMode(CENTER);
-      rect(0, 0, (this.r + pulse) * 2, (this.r + pulse) * 2);
+      beginShape();
+      vertex(0, -this.r - pulse);
+      vertex(this.r + pulse, 0);
+      vertex(0, this.r + pulse);
+      vertex(-this.r - pulse, 0);
+      endShape(CLOSE);
+      
+      // 內部裝飾線條與文字
+      stroke(255, 100, 100, 100);
+      line(-this.r/2, -this.r/2, this.r/2, this.r/2);
+      line(this.r/2, -this.r/2, -this.r/2, this.r/2);
+      
+      noStroke();
+      fill(255, 150, 150);
+      textSize(12);
+      textAlign(CENTER, CENTER);
+      textFont('Courier New');
+      text("ERR", 0, 0);
+
     } else {
-      fill(0, 150, 255, 200);
-      stroke(100, 200, 255);
+      // 系統核心：藍色防禦六角形
+      fill(0, 40, 80, 180);
+      stroke(0, 200, 255);
       strokeWeight(2);
-      ellipse(0, 0, (this.r + pulse) * 2);
+      beginShape();
+      for (let a = 0; a < TWO_PI; a += TWO_PI / 6) {
+        let hx = cos(a) * (this.r + pulse);
+        let hy = sin(a) * (this.r + pulse);
+        vertex(hx, hy);
+      }
+      endShape(CLOSE);
+      
+      // 內部旋轉科技環與文字
+      noFill();
+      stroke(0, 255, 255, 150);
+      strokeWeight(1);
+      ellipse(0, 0, this.r * 1.2);
+      
+      noStroke();
+      fill(100, 255, 255);
+      textSize(12);
+      textAlign(CENTER, CENTER);
+      textFont('Courier New');
+      text("SYS", 0, 0);
     }
     pop();
   }
@@ -336,12 +402,12 @@ class Particle {
     this.x = x;
     this.y = y;
     let angle = random(TWO_PI);
-    let speed = random(4, 10);
+    let speed = random(3, 8);
     this.vx = cos(angle) * speed;
     this.vy = sin(angle) * speed;
     this.alpha = 255;
     this.c = particleColor;
-    this.size = random(6, 14);
+    this.size = random(4, 10);
   }
 
   update() {
@@ -354,7 +420,9 @@ class Particle {
     push();
     noStroke();
     fill(red(this.c), green(this.c), blue(this.c), this.alpha);
-    ellipse(this.x, this.y, this.size);
+    rectMode(CENTER);
+    // 爆炸粒子改成方形，更有數位資料碎裂的感覺
+    rect(this.x, this.y, this.size, this.size); 
     pop();
   }
 
@@ -364,7 +432,7 @@ class Particle {
 }
 
 function createExplosion(x, y, particleColor) {
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 15; i++) {
     particles.push(new Particle(x, y, particleColor));
   }
 }
