@@ -9,16 +9,14 @@ let gameState = "LOADING"; // LOADING, START, PLAYING, GAMEOVER
 let score = 0;
 let gameTimer = 30; // 30秒限時挑戰
 let lastTimerCheck = 0;
-let isModelReady = false; // 新增：確保模型載入旗標
+let isModelReady = false;
 
 function preload() {
-  // 初始化 ml5.js HandPose，這會自動異步載入模型
-  handPose = ml5.handPose({ flipHorizontal: false }, modelLoaded); 
-}
-
-function modelLoaded() {
-  console.log("AI Model Successfully Loaded!");
-  isModelReady = true;
+  // 載入模型，並關閉內部自動偵測（以手動控制防卡死）
+  handPose = ml5.handPose({ flipHorizontal: false }, () => {
+    console.log("AI Model Loaded!");
+    isModelReady = true;
+  }); 
 }
 
 function setup() {
@@ -29,9 +27,6 @@ function setup() {
   video.size(800, 600);
   video.hide();
   
-  // 啟動手部即時偵測 (改用更穩定的連續偵測模式)
-  handPose.detectStart(video, gotHands);
-  
   // 初始生成目標物
   resetGame();
 }
@@ -39,12 +34,17 @@ function setup() {
 function draw() {
   background(5, 5, 13);
   
+  // 核心：手動控制偵測，只有在模型與影片都好的時候，主動叫 AI 偵測當前這一影格
+  if (isModelReady && video.elt.readyState >= 2) {
+    handPose.detect(video, gotHands);
+  }
+  
   // 1. 繪製攝影機畫面 (水平翻轉處理鏡像)
   if (gameState === "PLAYING" || gameState === "START" || gameState === "GAMEOVER") {
     push();
     translate(width, 0);
     scale(-1, 1);
-    if (video.elt.readyState >= 2) { // 安全檢查：確保影片串流已準備好再繪製
+    if (video.elt.readyState >= 2) {
       image(video, 0, 0, width, height);
     }
     pop();
@@ -56,7 +56,6 @@ function draw() {
   // 3. 根據遊戲狀態控制畫面
   if (gameState === "LOADING") {
     drawLoadingScreen();
-    // 如果模型好了且攝影機有畫面，就進入開始畫面
     if (isModelReady && video.elt.readyState >= 2) {
       gameState = "START";
     }
@@ -71,9 +70,11 @@ function draw() {
 
 // ------ 取得偵測結果 ------
 function gotHands(results) {
-  // 確保安全地將結果賦值，避免執行緒衝突
-  if (results) {
+  // 如果 AI 有回傳結果，就更新 hands 陣列，否則清空
+  if (results && results.length > 0) {
     hands = results;
+  } else {
+    hands = [];
   }
 }
 
@@ -88,7 +89,7 @@ function runGameLogic() {
     }
   }
 
-  // 更新與繪製粒子系統 (爆炸效果)
+  // 更新與繪製粒子系統
   for (let i = particles.length - 1; i >= 0; i--) {
     particles[i].update();
     particles[i].display();
@@ -103,16 +104,14 @@ function runGameLogic() {
     target.display();
   }
 
-  // 手部關鍵點骨架與互動邏輯
-  // 加上嚴格的多重保護機制，防止未偵測到手時造成的陣列越界或 undefine 崩潰
+  // 手部關鍵點骨架與互動邏輯 (嚴格防崩潰保護)
   if (hands && hands.length > 0 && hands[0] && hands[0].keypoints) {
     let hand = hands[0];
     
-    // 新版 ml5.js 食指尖端 index 為 8
+    // 檢查是否有抓到食指尖端(節點8)
     if (hand.keypoints.length > 8 && hand.keypoints[8]) {
       let indexFinger = hand.keypoints[8];
       
-      // 確保座標值存在
       if (indexFinger.x !== undefined && indexFinger.y !== undefined) {
         // 計算鏡像翻轉後的真實畫布座標
         let mappedX = width - indexFinger.x;
@@ -132,7 +131,6 @@ function runGameLogic() {
               createExplosion(targets[i].x, targets[i].y, color(255, 50, 50));
               score = max(0, score - 15);
             }
-            // 移除並重新生成
             targets.splice(i, 1);
             targets.push(new Target());
           }
@@ -155,7 +153,6 @@ function resetGame() {
   for (let i = 0; i < 2; i++) targets.push(new Target("CORE_DATA"));
 }
 
-// ------ 互動微調：點擊畫面切換狀態 ------
 function mousePressed() {
   if (gameState === "START") {
     resetGame();
@@ -166,7 +163,6 @@ function mousePressed() {
   }
 }
 
-// ------ 視覺特效：賽博朋克掃描線濾鏡 ------
 function drawSciFiFilter() {
   fill(0, 20, 40, 50);
   noStroke();
@@ -179,7 +175,6 @@ function drawSciFiFilter() {
   }
 }
 
-// ------ 視覺特效：手部準星 ------
 function drawCrosshair(x, y) {
   push();
   noFill();
@@ -196,7 +191,6 @@ function drawCrosshair(x, y) {
   pop();
 }
 
-// ------ UI 與各種狀態畫面顯示 ------
 function drawUI() {
   push();
   textFont('Courier New');
@@ -211,7 +205,7 @@ function drawUI() {
   else fill(255, 255, 0);
   text(`SEC_TIMER: ${gameTimer}s`, width - 220, 40);
   
-  // 系統狀態與手指偵測回報
+  // 偵測狀態回報
   if (hands && hands.length > 0) {
     fill(0, 255, 100);
     text(`HAND DETECTED: ACTIVE`, 20, 75);
@@ -281,7 +275,6 @@ function drawGameOverScreen() {
   pop();
 }
 
-// ------ 數據目標物類別 (Target Class) ------
 class Target {
   constructor(type) {
     this.x = random(50, width - 50);
@@ -324,13 +317,6 @@ class Target {
   }
 }
 
-// ------ 粒子系統特效 (Particle System) ------
-function createExplosion(x, y, particleColor) {
-  for (let i = 0; i < 25; i++) {
-    particles.push(new Particle(x, y, particleColor));
-  }
-}
-
 class Particle {
   constructor(x, y, particleColor) {
     this.x = x;
@@ -360,5 +346,11 @@ class Particle {
 
   isDead() {
     return this.alpha <= 0;
+  }
+}
+
+function createExplosion(x, y, particleColor) {
+  for (let i = 0; i < 25; i++) {
+    particles.push(new Particle(x, y, particleColor));
   }
 }
