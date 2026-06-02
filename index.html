@@ -1,36 +1,29 @@
 <!DOCTYPE html>
-<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Cyber-Trace: Data Purge (Mobile Pro)</title>
+  <title>Cyber-Trace: Data Purge (Mobile Pro Max)</title>
   
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
   <script src="https://unpkg.com/ml5@1.2.0/dist/ml5.min.js"></script>
   
   <style>
-    body {
+    body, html {
       margin: 0;
       padding: 0;
+      width: 100%;
+      height: 100%;
       background-color: #05050d;
+      overflow: hidden; /* 絕對禁止超出範圍與滑動 */
+      touch-action: none; 
       display: flex;
       justify-content: center;
       align-items: center;
-      height: 100vh;
-      overflow: hidden;
-      touch-action: none; /* 防止手機瀏覽器上下滑動干擾 */
     }
     canvas {
-      box-shadow: 0 0 20px rgba(0, 255, 255, 0.4);
-      border: 2px solid #00ffff;
-      border-radius: 10px;
-      /* 確保畫布在手機螢幕上自適應，絕對不會超出螢幕 */
-      width: 100%;
-      height: auto;
-      max-width: 480px;
-      max-height: 95vh;
-      object-fit: contain;
+      display: block;
+      /* 不要任何邊框，讓它真正全螢幕 */
     }
   </style>
 </head>
