@@ -1,9 +1,10 @@
 <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cyber-Trace: Data Purge (直式版)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Cyber-Trace: Data Purge (Mobile Pro)</title>
   
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
   <script src="https://unpkg.com/ml5@1.2.0/dist/ml5.min.js"></script>
@@ -18,11 +19,16 @@
       align-items: center;
       height: 100vh;
       overflow: hidden;
+      touch-action: none; /* 防止手機瀏覽器上下滑動干擾 */
     }
     canvas {
-      box-shadow: 0 0 30px rgba(0, 255, 255, 0.3);
+      box-shadow: 0 0 20px rgba(0, 255, 255, 0.4);
       border: 2px solid #00ffff;
-      /* 確保畫布在手機或電腦上都能完美顯示 */
+      border-radius: 10px;
+      /* 確保畫布在手機螢幕上自適應，絕對不會超出螢幕 */
+      width: 100%;
+      height: auto;
+      max-width: 480px;
       max-height: 95vh;
       object-fit: contain;
     }
